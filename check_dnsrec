@@ -1,0 +1,142 @@
+#!/usr/bin/env ruby
+# ☺  ./check_dnsrec.rb --hostname "puppetlabs.com" --record "AAAA"                                                      ruby-1.9.3-p125@puppetl
+# DNSREC OK: 0.132 seconds response time. puppetlabs.com AAAA record returns 2600:3C00::F03C:91FF:FE93:21B3|time=0.132124s
+
+require "thor"
+require "dnsruby"
+    
+CURRENT_VERSION = "0.0.1"
+NAGIOS_CHECK = "DNSREC"
+NAGIOS_CODE_OK = 0
+NAGIOS_CODE_WARNING = 1
+NAGIOS_CODE_CRITICAL = 2
+NAGIOS_CODE_UNKNOWN = 3
+
+class CheckDNS < Thor
+  map "-V" => :show_version
+
+  desc "check", "Checks DNS records"  
+  method_option :hostname, :type => :string, :aliases => "-H", :desc => "The name or address you want to query"
+  method_option :record, :type => :string, :default => "A", :aliases => "-R", :desc => "The type of DNS record you want to query"
+  method_option :name_server, :type => :string, :default => "208.67.222.222", :aliases => "-s", :desc => "Optional DNS server you want to query"
+  method_option :querytimeout, :type => :numeric, :default => 10, :aliases => "-t", :desc => "Seconds before connection times out"
+  method_option :expected_address, :type => :string, :aliases => "-a", :desc => "Additional IP address"
+  method_option :authoritative, :type => :boolean, :aliases => "-A", :desc => "Expect DNS server to be authoritative"
+  method_option :warning, :type => :numeric, :aliases => "-w", :desc => "Return warning if time elapsed exceeds value"
+  method_option :critical, :type => :numeric, :aliases => "-c", :desc => "Return critical if time elapsed exceeds value"
+  def check
+    dns = Dnsruby::Resolver.new(:query_timeout=>options[:querytimeout])
+    dns = Dnsruby::DNS.open(:nameserver=>options[:name_server])
+    begin
+      if options[:authoritative]
+        arecs = dns.getresources(options[:hostname], "SOA").first
+        arec = arecs.to_s.split
+        soa = arec[4]
+        raise 'Nameserver is not authoritative - HOST end with a dot?' if soa != options[:name_server] 
+      end
+      start_time = Time.now 
+    
+      if options[:expected_address]
+        recarray = []
+        a = dns.each_resource(options[:hostname], options[:record]) {|rr| 
+          tarray = rr.to_s.split
+          recarray << tarray[4]
+        }
+        numrecs = recarray.select {|v| v == options[:expected_address]}
+        raise 'No match found for expected address' if numrecs.count == 0
+        puts numrecs.count
+        message = "#{options[:expected_address]} exists as another IP address for #{options[:hostname]}."
+        ret = NAGIOS_CODE_OK
+
+      else
+        recs = dns.getresources(options[:hostname], options[:record]).first
+        rec = recs.to_s.split
+        raise 'No records were returned.' if rec.empty?
+        case options[:record]
+        when "MX"
+          msg = rec[5]
+        when "TXT"
+          msg = rec[4..rec.length].join
+        else
+          msg = rec[4]
+        end
+        ret = NAGIOS_CODE_OK
+        message = "#{options[:hostname]} #{options[:record]} record returns #{msg}"
+      end
+      end_time = Time.now
+      total_time = end_time - start_time
+    rescue ArgumentError
+      puts "CRITICAL - Invalid arguments"
+      exit NAGIOS_CODE_CRITICAL
+    rescue Exception => e
+      puts "CRITICAL - " + e.message
+      exit NAGIOS_CODE_WARNING
+    end
+    state_name = NAGIOS_CODE_OK
+    case state_name
+      when NAGIOS_CODE_OK
+        nagios_state_name = "OK"
+      when NAGIOS_CODE_WARNING
+        nagios_state_name = "WARNING"
+      when NAGIOS_CODE_CRITICAL
+        nagios_state_name = "CRITICAL"
+      when NAGIOS_CODE_UNKNOWN
+        nagios_state_name = "UNKNOWN"
+    end
+    if options[:critical] && total_time > options[:critical]
+       puts "CRITICAL - Time exceeds #{options[:critical]} seconds."
+       exit NAGIOS_CODE_CRITICAL
+    end
+    if options[:warning] && total_time > options[:warning]
+      puts "WARNING = Time exceeds #{options[:warning]} seconds."
+      exit NAGIOS_CODE_WARNING
+    end
+    print "#{NAGIOS_CHECK} #{nagios_state_name}: "+sprintf("%.3f", total_time)+" seconds response time. "
+    print "#{message}"
+    print "|time="+sprintf("%.6f", total_time)+"s"
+    print "\n"
+    exit ret
+  end
+
+  desc "help", "Print detailed help screen"
+  method_option :help, :type => :boolean, :aliases => "-h"
+  def help
+    text = <<-EOS
+    Options:
+     -h, --help
+        Print detailed help screen
+     -V, --version
+        Print version information
+     -H, --hostname=HOST
+        The name or address you want to query
+     -s, --server=HOST
+        Optional DNS server you want to use for the lookup
+     -a, --expected-address=IP-ADDRESS|HOST
+        Optional IP-ADDRESS you expect the DNS server to return. HOST must end with
+        a dot (.). This option can be repeated multiple times (Returns OK if any
+        value match). If multiple addresses are returned at once, you have to match
+        the whole string of addresses separated with commas (sorted alphabetically).
+     -A, --expect-authority
+        Optionally expect the DNS server to be authoritative for the lookup
+     -w, --warning=seconds
+        Return warning if elapsed time exceeds value. Default off
+     -c, --critical=seconds
+        Return critical if elapsed time exceeds value. Default off
+     -t, --timeout=INTEGER
+        Seconds before connection times out (default: 10)
+    EOS
+  	puts text
+    exit 0
+  end
+
+  desc "show_version", "Print version information"
+  method_option :show_version, :type => :boolean, :aliases => "-V"
+  def show_version
+  	puts "#{$0} - #{CURRENT_VERSION}"
+    exit 0
+  end
+
+  default_task :check
+end
+
+CheckDNS.start

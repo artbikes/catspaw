@@ -1,0 +1,20 @@
+#!/usr/bin/env ruby
+#---
+# Reverse the words of setences input from a file.
+#---
+if ARGV.count == 0
+  puts "Requires a file name for input"
+  puts "./sentence-reverse data"
+  exit 1
+end
+
+filenames = ARGV.select { |name| File.exists?(name) }
+fail "Data file(s) do not exist!" if filenames.empty?
+
+filenames.each do |name|
+  IO.readlines('data', "\n").each do |line|
+    next if /\S/ !~ line
+    output = line.chomp.split(/\b/).reverse!.join("").lstrip
+    puts output
+  end
+end

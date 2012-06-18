@@ -1,0 +1,35 @@
+#!/usr/bin/env ruby
+
+#---
+# http_load_time - Returns HTTP page loads in seconds to munin.
+#---
+
+require 'curb'
+def config(target)
+	text = <<-EOS
+graph_title HTTP loadtime of a page
+graph_args --base 1000 -l 0
+graph_vlabel Load time in seconds
+graph_category network
+graph_info This graph shows load time in seconds of #{target}
+loadtime.label loadtime
+loadtime.info Load time
+	EOS
+	puts text
+end
+if ARGV[0].to_s == "config"
+	config("http://localhost/")
+	exit 0
+else
+	host = ARGV[0] || "http://localhost"
+end
+c = Curl::Easy.new(host)
+# Attempt to cache nothing and to close connection
+c.headers['Pragma'] = 'no-cache'
+c.headers['Cache-Control'] = 'no-cache'
+c.headers['Connection'] = 'close'
+start = Time.now
+c.perform
+finish = Time.now
+elapsed = ( finish - start )
+print "loadtime.value "+sprintf("%.2f\n", elapsed)
